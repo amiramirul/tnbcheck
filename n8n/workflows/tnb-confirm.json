@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://local-api:3001/confirm",
+        "url": "http://192.168.100.244:5181/confirm",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",

@@ -37,8 +37,11 @@ const emptyReading: Reading = {
   recordedAt: '',
 }
 
-const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || '/api/n8n/webhook/tnb-check'
-const meterApiUrl = '/api/meter'
+// BASE_URL always ends with '/', so API calls stay under the app's subpath
+// (e.g. /tnbcheck/api/meter) instead of the domain root.
+const baseUrl = import.meta.env.BASE_URL
+const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || `${baseUrl}api/n8n/webhook/tnb-check`
+const meterApiUrl = `${baseUrl}api/meter`
 const formatDateTime = (value: string) => new Intl.DateTimeFormat('ms-MY', {
   dateStyle: 'medium',
   timeStyle: 'short',

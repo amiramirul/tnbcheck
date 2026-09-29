@@ -1,0 +1,110 @@
+# Production stack for the Dell OptiPlex server (192.168.100.244).
+#
+# Differences from docker-compose.yml:
+#   - `app` uses Dockerfile.prod: pre-built static assets on nginx, not the Vite dev server.
+#   - There is NO n8n service here. This stack uses the server's existing shared
+#     n8n instance (https://n8n.amiramirul.com, container `n8n` on host port 5678).
+#   - Every service joins the shared, externally-created `edge` network so that
+#     Nginx Proxy Manager can reach it by container name. Nothing is published
+#     to the internet from this file - the Cloudflare tunnel points at NPM.
+#
+# Secrets live in ./.env (gitignored, and outside any CI checkout path, so a
+# deploy never wipes them). Run with:
+#   docker compose -f docker-compose.prod.yml up -d --build
+
+name: tnbcheck
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_BASE_PATH: /tnbcheck/
+    container_name: tnbcheck_app
+    restart: unless-stopped
+    # Published on the host on purpose. Nginx Proxy Manager generates
+    # `proxy_pass http://<host>:<port>;` with a LITERAL hostname, and nginx
+    # resolves that once at config load and caches it - so pointing NPM at the
+    # container name goes stale (No route to host) the moment a deploy
+    # recreates the container with a new IP. A host port is stable across
+    # redeploys and needs no nginx reload.
+    ports:
+      - "5180:80"
+    depends_on:
+      local-api:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not `localhost`: the container resolves localhost to ::1
+      # first and nginx here listens on IPv4 only, so `localhost` fails and the
+      # container reports unhealthy while serving traffic perfectly well.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - edge
+
+  local-api:
+    build:
+      context: ./local-api
+    container_name: tnbcheck_local_api
+    restart: unless-stopped
+    # Published on the host for the same reason as `app`: the shared n8n
+    # instance lives on its own docker network and resolves a container name
+    # like `local-api` to nothing. Its workflows call this service by host
+    # address instead. 3001 is already taken on this host by uptime-kuma.
+    ports:
+      - "5181:3001"
+    environment:
+      PORT: 3001
+      PGHOST: ${BILL_DB_HOST:-postgres}
+      PGPORT: ${BILL_DB_PORT:-5432}
+      PGDATABASE: ${BILL_DB_NAME:-${POSTGRES_DB:-tnbcheck}}
+      PGUSER: ${BILL_DB_USER:-${POSTGRES_USER:-tnbcheck}}
+      PGPASSWORD: ${BILL_DB_PASSWORD:-${POSTGRES_PASSWORD:-local-dev-password}}
+      PGSSL_CA_FILE: ${BILL_DB_SSL_CA_FILE:-}
+      GOOGLE_AI_STUDIO_API_KEY: ${GOOGLE_AI_STUDIO_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - edge
+
+  # Kept as a fallback and because it still holds earlier data. With
+  # BILL_DB_HOST set in .env the local-api talks to Aiven instead, so nothing
+  # connects here unless that setting is cleared.
+  postgres:
+    image: postgres:16-alpine
+    container_name: tnbcheck_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tnbcheck}
+      POSTGRES_USER: ${POSTGRES_USER:-tnbcheck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tnbcheck} -d ${POSTGRES_DB:-tnbcheck}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - edge
+
+volumes:
+  postgres_data:
+
+networks:
+  edge:
+    external: true

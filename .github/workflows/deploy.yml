@@ -77,14 +77,19 @@ jobs:
       - name: Wait for the app to report healthy
         working-directory: ${{ env.DEPLOY_DIR }}
         run: |
+          # Delegate to the container's own healthcheck rather than probing
+          # with wget here: a second probe written as `http://localhost/...`
+          # resolves to ::1 inside the container while nginx listens on IPv4
+          # only, which fails even though the container is serving fine.
           for i in $(seq 1 30); do
-            if docker exec tnbcheck_app wget -q --spider http://localhost/healthz; then
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' tnbcheck_app 2>/dev/null)" = "healthy" ]; then
               echo "tnbcheck_app is healthy"
               exit 0
             fi
             sleep 2
           done
           echo "app did not become healthy in time"
+          docker inspect -f '{{json .State.Health}}' tnbcheck_app || true
           docker compose -f docker-compose.prod.yml logs --tail 50 app
           exit 1
 

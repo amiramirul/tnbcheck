@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TNBCHECK_API_BASE }}/ocr",
+        "url": "http://tnbcheck_local_api:3001/ocr",
         "sendBody": true,
         "contentType": "multipart-form-data",
         "bodyParameters": {

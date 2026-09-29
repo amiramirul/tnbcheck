@@ -1,8 +1,8 @@
 name: Deploy
 
 # Validates every PR, deploys only when something lands on main.
-# Runs on the self-hosted runner living on the Dell OptiPlex, so the deploy
-# step executes on the box itself - nothing needs to reach in from the internet.
+# Runs on a self-hosted runner installed on the deploy host, so the deploy step
+# executes on the machine itself - nothing needs to reach in from the internet.
 
 on:
   pull_request:
@@ -19,7 +19,10 @@ env:
   # Stable deploy checkout on the server. Deliberately NOT the runner's own
   # _work directory: this clone is never `git clean`-ed, so the untracked
   # .env (secrets) and certs/ survive every deploy.
-  DEPLOY_DIR: /home/amir/tnbcheck
+  #
+  # Override per-repository with a `DEPLOY_DIR` repository variable
+  # (Settings -> Secrets and variables -> Actions -> Variables).
+  DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '/srv/tnbcheck' }}
 
 jobs:
   verify:

@@ -1,15 +1,15 @@
-# Production stack for the Dell OptiPlex server (192.168.100.244).
+# Production stack.
 #
 # Differences from docker-compose.yml:
 #   - `app` uses Dockerfile.prod: pre-built static assets on nginx, not the Vite dev server.
-#   - There is NO n8n service here. This stack uses the server's existing shared
-#     n8n instance (https://n8n.amiramirul.com, container `n8n` on host port 5678).
-#   - Every service joins the shared, externally-created `edge` network so that
-#     Nginx Proxy Manager can reach it by container name. Nothing is published
-#     to the internet from this file - the Cloudflare tunnel points at NPM.
+#   - There is NO n8n service here. This stack talks to an existing shared n8n
+#     instance; set N8N_UPSTREAM in .env to point at it.
+#   - Every service joins the shared, externally-created `edge` network so a
+#     reverse proxy on the same host can reach it. Nothing in this file is meant
+#     to be exposed to the internet directly.
 #
-# Secrets live in ./.env (gitignored, and outside any CI checkout path, so a
-# deploy never wipes them). Run with:
+# Configuration and secrets live in ./.env (gitignored, and outside any CI
+# checkout path, so a deploy never wipes them). See .env.example.
 #   docker compose -f docker-compose.prod.yml up -d --build
 
 name: tnbcheck
@@ -20,17 +20,25 @@ services:
       context: .
       dockerfile: Dockerfile.prod
       args:
-        VITE_BASE_PATH: /tnbcheck/
+        # Subpath the app is published under. Must match the reverse proxy's
+        # location and N8N_UPSTREAM's sibling routes.
+        APP_BASE_PATH: ${APP_BASE_PATH:-/tnbcheck}
     container_name: tnbcheck_app
     restart: unless-stopped
-    # Published on the host on purpose. Nginx Proxy Manager generates
-    # `proxy_pass http://<host>:<port>;` with a LITERAL hostname, and nginx
-    # resolves that once at config load and caches it - so pointing NPM at the
-    # container name goes stale (No route to host) the moment a deploy
-    # recreates the container with a new IP. A host port is stable across
-    # redeploys and needs no nginx reload.
+    environment:
+      # Rendered into the nginx config at container start; see
+      # docker/default.conf.template. Deliberately required rather than
+      # defaulted: a wrong value here shows up as a 502 on the webhook route
+      # only, which is easy to miss.
+      N8N_UPSTREAM: ${N8N_UPSTREAM:?set N8N_UPSTREAM in .env - see .env.example}
+    # Published on the host on purpose. A reverse proxy such as Nginx Proxy
+    # Manager generates `proxy_pass http://<host>:<port>;` with a LITERAL
+    # hostname and nginx resolves that once at config load, caching it - so
+    # pointing it at a container name goes stale (`No route to host`) the moment
+    # a deploy recreates the container with a new IP. A host port is stable
+    # across redeploys and needs no proxy reload.
     ports:
-      - "5180:80"
+      - "${APP_PORT:-5180}:80"
     depends_on:
       local-api:
         condition: service_healthy
@@ -51,12 +59,12 @@ services:
       context: ./local-api
     container_name: tnbcheck_local_api
     restart: unless-stopped
-    # Published on the host for the same reason as `app`: the shared n8n
-    # instance lives on its own docker network and resolves a container name
-    # like `local-api` to nothing. Its workflows call this service by host
-    # address instead. 3001 is already taken on this host by uptime-kuma.
+    # Published on the host for the same reason as `app`: a shared n8n instance
+    # usually sits on its own docker network, where this project's container
+    # names do not resolve, so its workflows have to call this service by host
+    # address. Pick a free port - check with `ss -tln`.
     ports:
-      - "5181:3001"
+      - "${LOCAL_API_PORT:-5181}:3001"
     environment:
       PORT: 3001
       PGHOST: ${BILL_DB_HOST:-postgres}
@@ -81,9 +89,9 @@ services:
     networks:
       - edge
 
-  # Kept as a fallback and because it still holds earlier data. With
-  # BILL_DB_HOST set in .env the local-api talks to Aiven instead, so nothing
-  # connects here unless that setting is cleared.
+  # Fallback and home of earlier data. With BILL_DB_HOST set in .env the
+  # local-api talks to that database instead, so nothing connects here unless
+  # that setting is cleared.
   postgres:
     image: postgres:16-alpine
     container_name: tnbcheck_postgres

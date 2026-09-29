@@ -34,8 +34,14 @@ Untuk berhenti, jalankan `docker compose down`. Data PostgreSQL dan konfigurasi 
 Production guna `docker-compose.prod.yml`, bukan `docker-compose.yml`. Bezanya:
 
 - `app` guna `Dockerfile.prod` — asset static yang sudah di-`npm run build`, disajikan oleh nginx. Bukan Vite dev server.
-- `n8n` di-publish pada port **5679** sebab 5678 sudah diambil container n8n lain atas server yang sama.
-- Semua servis menyertai docker network luaran bernama `edge`, supaya Nginx Proxy Manager boleh reach mereka ikut nama container.
+- **Tiada servis n8n di sini.** Stack ini guna n8n sedia ada atas server yang sama (`https://n8n.amiramirul.com`, container `n8n`, port hos 5678).
+- `app` dan `local-api` diterbitkan pada port hos (**5180** dan **5181**) dan menyertai docker network luaran `edge`.
+
+### Kenapa port hos, bukan nama container
+
+Nginx Proxy Manager menjana `proxy_pass http://<nama-container>:<port>;` dengan hostname **literal**. nginx resolve nama itu **sekali sahaja** semasa config dimuatkan, kemudian simpan IP tersebut. Sebaik sahaja deploy recreate container dengan IP baru, NPM akan cuba IP lama dan pulangkan 502 (`No route to host`) sehingga nginx di-reload.
+
+Port hos kekal stabil merentas redeploy, jadi NPM tak pernah perlu reload. Ini juga sebabnya workflow n8n memanggil `http://192.168.100.244:5181` dan bukan `http://local-api:3001` — n8n sedia ada berada atas network docker sendiri (`n8n_default`), jadi nama container stack ini tak resolve di situ. Port 3001 sudah diambil uptime-kuma.
 
 App disajikan di bawah subpath `apps.amiramirul.com/tnbcheck`. Ini memerlukan `VITE_BASE_PATH=/tnbcheck/` semasa build; tanpanya asset akan diminta dari root domain dan 404. Routing API (`/tnbcheck/api/n8n/` dan `/tnbcheck/api/meter/`) dibuat oleh nginx dalam container app sendiri, jadi NPM cuma perlu **satu** custom location setiap app.
 
@@ -44,13 +50,16 @@ App disajikan di bawah subpath `apps.amiramirul.com/tnbcheck`. Ini memerlukan `V
 ```bash
 git clone https://github.com/amiramirul/tnbcheck.git ~/tnbcheck
 cd ~/tnbcheck
-cp .env.example .env      # isi POSTGRES_PASSWORD, N8N_ENCRYPTION_KEY, GOOGLE_AI_STUDIO_API_KEY
-docker network create edge
+cp .env.example .env                              # rujuk nota di bawah
+docker network create edge                        # jika belum ada
+docker network connect edge nginx-proxy-manager   # jika belum ada
 ```
+
+**Jangan salin `.env.example` atas `.env` yang sudah berjalan.** Kedua-dua `POSTGRES_PASSWORD` dan `N8N_ENCRYPTION_KEY` mesti kekal sama seperti semasa pertama kali dijalankan; menukarnya menyebabkan n8n gagal start (`Mismatching encryption keys`) dan Postgres menolak sambungan, walaupun data dalam volume masih elok. Isi `GOOGLE_AI_STUDIO_API_KEY` dan nilai Aiven dengan **menyunting** fail itu, bukan dengan menimpanya.
 
 ### Deploy
 
-Otomatik: push ke `main` akan mencetuskan `.github/workflows/deploy.yml` atas self-hosted runner `dell-optix-tnbcheck`. Pull request pula menjalankan lint dan build sahaja, tanpa deploy.
+Otomatik: push ke `main` akan mencetuskan `.github/workflows/deploy.yml` atas self-hosted runner `dell-optix-tnbcheck`. Pull request pula menjalankan lint dan build sahaja, tanpa deploy. Workflow deploy menarik ke dalam clone stabil di `/home/amir/tnbcheck` (bukan direktori `_work` runner), supaya `.env` yang tidak di-track tidak dipadam oleh `git clean`.
 
 Manual:
 
@@ -60,5 +69,29 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Selepas deploy pertama, buka n8n di `http://192.168.100.244:5679`, lengkapkan setup akaun, dan **aktifkan** kedua-dua workflow import secara manual. Webhook `/tnbcheck/api/n8n/webhook/tnb-check` akan pulangkan 404 selagi workflow belum diaktifkan.
+### Workflow n8n
+
+Kedua-dua workflow (`n8n/workflows/*.json`) diimport ke dalam n8n sedia ada:
+
+```bash
+docker cp n8n/workflows/tnb-scan.json n8n:/tmp/tnb-scan.json
+docker cp n8n/workflows/tnb-confirm.json n8n:/tmp/tnb-confirm.json
+docker exec n8n n8n import:workflow --input=/tmp/tnb-scan.json
+docker exec n8n n8n import:workflow --input=/tmp/tnb-confirm.json
+# import sentiasa masuk sebagai TIDAK AKTIF — aktifkan, kemudian restart:
+docker exec n8n n8n update:workflow --id=8b6c03ef-58d6-4ea9-915f-dc9bd9ec7b01 --active=true
+docker exec n8n n8n update:workflow --id=8b6c03ef-58d6-4ea9-915f-dc9bd9ec7b02 --active=true
+docker restart n8n
+```
+
+`update:workflow` tidak berkuat kuasa sehingga n8n direstart. Frontend memanggil webhook melalui `/tnbcheck/api/n8n/webhook/tnb-check`, yang app nginx proksikan ke n8n sedia ada.
+
+### Port yang digunakan
+
+| Perkhidmatan | Port hos |
+|---|---|
+| `app` (SPA) | 5180 |
+| `local-api` | 5181 |
+| Nginx Proxy Manager (admin / origin) | 81 / 8082 |
+
 

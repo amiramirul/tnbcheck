@@ -2,14 +2,15 @@
 #
 # Differences from docker-compose.yml:
 #   - `app` uses Dockerfile.prod: pre-built static assets on nginx, not the Vite dev server.
-#   - `n8n` is published on 5679 because 5678 is already taken by the server's other n8n container.
+#   - There is NO n8n service here. This stack uses the server's existing shared
+#     n8n instance (https://n8n.amiramirul.com, container `n8n` on host port 5678).
 #   - Every service joins the shared, externally-created `edge` network so that
 #     Nginx Proxy Manager can reach it by container name. Nothing is published
 #     to the internet from this file - the Cloudflare tunnel points at NPM.
 #
-# Secrets live in /home/amir/tnbcheck.env (outside the repo, so a CI checkout
-# never wipes them). Run with:
-#   docker compose --env-file /home/amir/tnbcheck.env -f docker-compose.prod.yml up -d --build
+# Secrets live in ./.env (gitignored, and outside any CI checkout path, so a
+# deploy never wipes them). Run with:
+#   docker compose -f docker-compose.prod.yml up -d --build
 
 name: tnbcheck
 
@@ -22,11 +23,22 @@ services:
         VITE_BASE_PATH: /tnbcheck/
     container_name: tnbcheck_app
     restart: unless-stopped
+    # Published on the host on purpose. Nginx Proxy Manager generates
+    # `proxy_pass http://<host>:<port>;` with a LITERAL hostname, and nginx
+    # resolves that once at config load and caches it - so pointing NPM at the
+    # container name goes stale (No route to host) the moment a deploy
+    # recreates the container with a new IP. A host port is stable across
+    # redeploys and needs no nginx reload.
+    ports:
+      - "5180:80"
     depends_on:
       local-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/healthz || exit 1"]
+      # 127.0.0.1, not `localhost`: the container resolves localhost to ::1
+      # first and nginx here listens on IPv4 only, so `localhost` fails and the
+      # container reports unhealthy while serving traffic perfectly well.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -39,6 +51,12 @@ services:
       context: ./local-api
     container_name: tnbcheck_local_api
     restart: unless-stopped
+    # Published on the host for the same reason as `app`: the shared n8n
+    # instance lives on its own docker network and resolves a container name
+    # like `local-api` to nothing. Its workflows call this service by host
+    # address instead. 3001 is already taken on this host by uptime-kuma.
+    ports:
+      - "5181:3001"
     environment:
       PORT: 3001
       PGHOST: ${BILL_DB_HOST:-postgres}
@@ -55,7 +73,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -63,40 +81,9 @@ services:
     networks:
       - edge
 
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
-    container_name: tnbcheck_n8n
-    restart: unless-stopped
-    ports:
-      - "5679:5678"
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-tnbcheck}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-tnbcheck}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-encryption-key-change-me-32-chars}
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_SECURE_COOKIE: "false"
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      GENERIC_TIMEZONE: Asia/Kuala_Lumpur
-      TZ: Asia/Kuala_Lumpur
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/workflows:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 15
-      start_period: 40s
-    networks:
-      - edge
-
+  # Kept as a fallback and because it still holds earlier data. With
+  # BILL_DB_HOST set in .env the local-api talks to Aiven instead, so nothing
+  # connects here unless that setting is cleared.
   postgres:
     image: postgres:16-alpine
     container_name: tnbcheck_postgres
@@ -116,7 +103,6 @@ services:
       - edge
 
 volumes:
-  n8n_data:
   postgres_data:
 
 networks:

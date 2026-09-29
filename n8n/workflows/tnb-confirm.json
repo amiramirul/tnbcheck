@@ -1,0 +1,58 @@
+{
+  "name": "TNB Check - Simpan Bacaan Meter",
+  "id": "8b6c03ef-58d6-4ea9-915f-dc9bd9ec7b02",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tnb-check-confirm",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "8de88253-17b9-479a-98bd-8ab256f1f38d",
+      "name": "Terima Pengesahan Pengguna",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "a1e17701-13d2-46ac-8da9-dfc2579b5b81"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://local-api:3001/confirm",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.body ?? $json) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b7d89c77-5460-4d70-bc59-3f8af470b4bd",
+      "name": "Simpan bacaan meter ke database",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueRegularOutput",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Terima Pengesahan Pengguna": {
+          "main": [[{"node": "Simpan bacaan meter ke database", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d41695ae-dddc-41bb-af5b-006f89b021a3",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

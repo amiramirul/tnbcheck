@@ -1,0 +1,120 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      N8N_PROXY_TARGET: http://n8n:5678
+      METER_API_PROXY_TARGET: http://local-api:3001
+    volumes:
+      - .:/app
+      - app_node_modules:/app/node_modules
+    depends_on:
+      n8n:
+        condition: service_healthy
+      local-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-tnbcheck}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-tnbcheck}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-encryption-key-change-me-32-chars}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      GENERIC_TIMEZONE: Asia/Kuala_Lumpur
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  n8n-workflow-import:
+    image: docker.n8n.io/n8nio/n8n:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - n8n import:workflow --input=/workflows/tnb-scan.json && n8n import:workflow --input=/workflows/tnb-confirm.json
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-tnbcheck}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-tnbcheck}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-encryption-key-change-me-32-chars}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      GENERIC_TIMEZONE: Asia/Kuala_Lumpur
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      n8n:
+        condition: service_healthy
+    restart: "no"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tnbcheck}
+      POSTGRES_USER: ${POSTGRES_USER:-tnbcheck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tnbcheck} -d ${POSTGRES_DB:-tnbcheck}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  local-api:
+    build:
+      context: ./local-api
+    environment:
+      PORT: 3001
+      PGHOST: ${BILL_DB_HOST:-postgres}
+      PGPORT: ${BILL_DB_PORT:-5432}
+      PGDATABASE: ${BILL_DB_NAME:-${POSTGRES_DB:-tnbcheck}}
+      PGUSER: ${BILL_DB_USER:-${POSTGRES_USER:-tnbcheck}}
+      PGPASSWORD: ${BILL_DB_PASSWORD:-${POSTGRES_PASSWORD:-local-dev-password}}
+      PGSSL_CA_FILE: ${BILL_DB_SSL_CA_FILE:-}
+      GOOGLE_AI_STUDIO_API_KEY: ${GOOGLE_AI_STUDIO_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  app_node_modules:
+  n8n_data:
+  postgres_data:

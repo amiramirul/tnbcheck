@@ -1,0 +1,65 @@
+{
+  "name": "TNB Check - Baca Meter",
+  "id": "8b6c03ef-58d6-4ea9-915f-dc9bd9ec7b01",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tnb-check",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "24bb56a8-6ad1-4f03-99bb-a40d7e91f841",
+      "name": "Terima Gambar Bil",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "f7f4de40-0171-4be1-b474-2f8c606ae385"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://local-api:3001/ocr",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "image",
+              "inputDataFieldName": "image"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "5f2fcb71-c6f4-447f-ab4d-a6dd78d31acb",
+      "name": "Baca paparan meter dengan Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueRegularOutput",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Terima Gambar Bil": {
+          "main": [[{"node": "Baca paparan meter dengan Gemini", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "74dd9348-6541-459a-a793-67f1d5e4111c",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

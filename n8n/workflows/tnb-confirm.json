@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TNBCHECK_API_BASE }}/confirm",
+        "url": "http://tnbcheck_local_api:3001/confirm",
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",

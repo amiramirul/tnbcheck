@@ -21,14 +21,34 @@ Semua nilai khusus deployment hidup dalam `.env` (tidak di-track). `.env.example
 
 | Pemboleh ubah | Di mana | Fungsi |
 |---|---|---|
-| `N8N_UPSTREAM` | container `app` | `<host>:<port>` instance n8n yang boleh dicapai oleh app, untuk laluan webhook |
-| `TNBCHECK_API_BASE` | container **n8n** | sebaliknya: alamat `local-api` yang boleh dicapai oleh n8n |
+| `N8N_UPSTREAM` | container `app` | host n8n untuk laluan webhook; lalai `n8n:5678` |
 | `APP_BASE_PATH` | build + runtime | subpath app disajikan, contoh `/tnbcheck` |
 | `APP_PORT`, `LOCAL_API_PORT` | container | port hos yang diterbitkan |
 
-Kedua-dua arah mesti diset, kerana app dan n8n biasanya berada atas docker network yang berbeza dan **nama container tidak resolve merentas network**. Guna alamat hos untuk kedua-duanya.
+### Bagaimana app dan n8n bercakap antara satu sama lain
 
-Workflow n8n membaca `TNBCHECK_API_BASE` melalui ekspresi `{{ $env.TNBCHECK_API_BASE }}`, jadi alamat sebenar tidak disimpan dalam fail workflow dan repo ini tidak perlu membawa alamat sesiapa.
+Kedua-duanya berada atas docker network yang berbeza, jadi ia **tidak** boleh resolve nama container masing-masing secara lalai. Penyelesaiannya: letak kedua-duanya atas network bersama `edge`.
+
+- app → n8n: `N8N_UPSTREAM`, lalai `n8n:5678`
+- n8n → app: workflow memanggil `http://tnbcheck_local_api:3001`
+
+Kedua-duanya guna **nama container**, bukan alamat hos. Jadi repo ini tidak membawa alamat deployment sesiapa, dan oleh sebab docker DNS re-resolve setiap request, container yang direstart diambil secara automatik tanpa masalah IP basi.
+
+n8n cuma perlu menyertai `edge` dalam compose-nya sendiri:
+
+```yaml
+    networks:
+      - default
+      - edge
+# ...
+networks:
+  edge:
+    external: true
+```
+
+**Jangan** cuba guna `{{ $env.NAMA }}` untuk ini. n8n 2.x menyekat akses env secara lalai (`N8N_BLOCK_ENV_ACCESS_IN_NODE=true`), dan mematikannya bermakna setiap penulis workflow boleh membaca kesemua environment variable — termasuk password database.
+
+> **Perangkap nama atas network kongsi.** Compose menerbitkan nama service sebagai alias DNS atas setiap network yang disertai. Service bernama `postgres` atas network kongsi menjawab kepada nama generik `postgres` di situ, jadi container lain yang mencari `postgres` boleh diberi database yang **salah** — secara senyap, bukan gagal. Sebab itu service database di sini bernama `db`, bukan `postgres`.
 
 ## Guna Aiven untuk rekod bil
 
@@ -98,4 +118,4 @@ docker restart n8n
 
 `update:workflow` tidak berkuat kuasa sehingga n8n direstart. Frontend memanggil webhook melalui `<base>/api/n8n/webhook/tnb-check`, yang app nginx proksikan ke `N8N_UPSTREAM`.
 
-`n8n` mesti mempunyai `TNBCHECK_API_BASE` dalam environment-nya sendiri — itu alamat yang workflow guna untuk memanggil `local-api`. Tanpanya, node HTTP dalam workflow gagal resolve.
+Workflow memanggil `local-api` sebagai `http://tnbcheck_local_api:3001`, jadi container n8n mesti menyertai network `edge` (lihat bahagian konfigurasi di atas) — kalau tidak, nama itu tidak resolve.

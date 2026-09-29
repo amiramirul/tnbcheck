@@ -20,21 +20,22 @@ server {
     }
 
     # --- internal API routes -------------------------------------------------
-    # These live INSIDE the app's own /tnbcheck prefix. That is deliberate:
-    # Nginx Proxy Manager only ever needs ONE custom location per app
-    # (/tnbcheck -> this container), so shipping another app never means
-    # touching NPM's routing.
+    # These live INSIDE the app's own prefix (APP_BASE_PATH, no trailing slash).
+    # That is deliberate: the reverse proxy in front only ever needs ONE custom
+    # location per app, so shipping another app never means touching its routes.
     #
-    # `rewrite ... break` strips the prefix, which a variable-based
-    # proxy_pass cannot do on its own.
+    # `rewrite ... break` strips the prefix, which a variable-based proxy_pass
+    # cannot do on its own.
 
-    location /tnbcheck/api/n8n/ {
-        # The shared n8n instance lives outside this compose project (its own
-        # `n8n_default` network), so it is addressed by the host's address
-        # rather than by container name. Using a hostname here would also
-        # require /etc/hosts resolution, which nginx's resolver does not do.
-        set $n8n_upstream 192.168.100.244:5678;
-        rewrite ^/tnbcheck/api/n8n/(.*)$ /$1 break;
+    location ${APP_BASE_PATH}/api/n8n/ {
+        # N8N_UPSTREAM is injected by the nginx image's envsubst step, which
+        # turns /etc/nginx/templates/*.template into /etc/nginx/conf.d/*.conf
+        # at container start. Set it to `<host>:<port>` of an n8n reachable from
+        # this container, which is usually NOT a container name here: the shared
+        # n8n tends to live on its own docker network where this project's
+        # container names do not resolve.
+        set $n8n_upstream ${N8N_UPSTREAM};
+        rewrite ^${APP_BASE_PATH}/api/n8n/(.*)$ /$1 break;
         proxy_pass http://$n8n_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -43,13 +44,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        # Gemini reads the meter photo; give it room to answer.
+        # The reader may hand the photo to a model; give it room to answer.
         proxy_read_timeout 300s;
     }
 
-    location /tnbcheck/api/meter/ {
+    location ${APP_BASE_PATH}/api/meter/ {
         set $meter_upstream tnbcheck_local_api:3001;
-        rewrite ^/tnbcheck/api/meter/(.*)$ /$1 break;
+        rewrite ^${APP_BASE_PATH}/api/meter/(.*)$ /$1 break;
         proxy_pass http://$meter_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -59,18 +60,18 @@ server {
     }
 
     # --- static SPA ----------------------------------------------------------
-    # Built files literally live under /usr/share/nginx/html/tnbcheck, so
-    # requests pass through untouched and Vite's base='/tnbcheck/' asset URLs
-    # resolve directly - no alias needed.
-    location /tnbcheck/ {
-        try_files $uri $uri/ /tnbcheck/index.html;
+    # Build output is mounted at /usr/share/nginx/html${APP_BASE_PATH}, so
+    # requests pass through untouched and the bundler's asset URLs (which carry
+    # the same base path) resolve directly - no alias needed.
+    location ${APP_BASE_PATH}/ {
+        try_files $uri $uri/ ${APP_BASE_PATH}/index.html;
     }
 
-    location = /tnbcheck {
-        return 301 /tnbcheck/;
+    location = ${APP_BASE_PATH} {
+        return 301 ${APP_BASE_PATH}/;
     }
 
-    # Everything else belongs to other apps behind Nginx Proxy Manager.
+    # Everything else belongs to other apps behind the reverse proxy.
     location / {
         return 404;
     }

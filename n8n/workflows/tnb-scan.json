@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://192.168.100.244:5181/ocr",
+        "url": "={{ $env.TNBCHECK_API_BASE }}/ocr",
         "sendBody": true,
         "contentType": "multipart-form-data",
         "bodyParameters": {

@@ -1,0 +1,124 @@
+# Production stack for the Dell OptiPlex server (192.168.100.244).
+#
+# Differences from docker-compose.yml:
+#   - `app` uses Dockerfile.prod: pre-built static assets on nginx, not the Vite dev server.
+#   - `n8n` is published on 5679 because 5678 is already taken by the server's other n8n container.
+#   - Every service joins the shared, externally-created `edge` network so that
+#     Nginx Proxy Manager can reach it by container name. Nothing is published
+#     to the internet from this file - the Cloudflare tunnel points at NPM.
+#
+# Secrets live in /home/amir/tnbcheck.env (outside the repo, so a CI checkout
+# never wipes them). Run with:
+#   docker compose --env-file /home/amir/tnbcheck.env -f docker-compose.prod.yml up -d --build
+
+name: tnbcheck
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_BASE_PATH: /tnbcheck/
+    container_name: tnbcheck_app
+    restart: unless-stopped
+    depends_on:
+      local-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - edge
+
+  local-api:
+    build:
+      context: ./local-api
+    container_name: tnbcheck_local_api
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      PGHOST: ${BILL_DB_HOST:-postgres}
+      PGPORT: ${BILL_DB_PORT:-5432}
+      PGDATABASE: ${BILL_DB_NAME:-${POSTGRES_DB:-tnbcheck}}
+      PGUSER: ${BILL_DB_USER:-${POSTGRES_USER:-tnbcheck}}
+      PGPASSWORD: ${BILL_DB_PASSWORD:-${POSTGRES_PASSWORD:-local-dev-password}}
+      PGSSL_CA_FILE: ${BILL_DB_SSL_CA_FILE:-}
+      GOOGLE_AI_STUDIO_API_KEY: ${GOOGLE_AI_STUDIO_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      - ./certs:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - edge
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: tnbcheck_n8n
+    restart: unless-stopped
+    ports:
+      - "5679:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-tnbcheck}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-tnbcheck}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-encryption-key-change-me-32-chars}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      GENERIC_TIMEZONE: Asia/Kuala_Lumpur
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    networks:
+      - edge
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tnbcheck_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tnbcheck}
+      POSTGRES_USER: ${POSTGRES_USER:-tnbcheck}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tnbcheck} -d ${POSTGRES_DB:-tnbcheck}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - edge
+
+volumes:
+  n8n_data:
+  postgres_data:
+
+networks:
+  edge:
+    external: true
